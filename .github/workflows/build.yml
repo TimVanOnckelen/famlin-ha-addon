@@ -6,6 +6,18 @@ on:
     tags: ["*"]
   pull_request:
   workflow_dispatch:
+  # Called by update.yml to validate (and publish images for) a version bump
+  # that only exists on a temporary branch.
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build (default is the triggering ref)
+        type: string
+        default: ""
+      push_images:
+        description: Push the images to ghcr.io after building
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,12 +27,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - name: Add-on linter
         uses: frenck/action-addon-linter@v2
         with:
           path: ./famlin
       - name: ShellCheck
-        run: shellcheck famlin/rootfs/run.sh
+        run: shellcheck -x famlin/rootfs/run.sh .github/scripts/*.sh
+      - name: Update script tests
+        run: .github/scripts/test-update.sh
 
   build:
     needs: lint
@@ -38,8 +54,12 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       IMAGE: ghcr.io/timvanonckelen/famlin-ha-addon-${{ matrix.arch }}
+      # Push on main, or when update.yml asks for it for a validated bump.
+      PUSH: ${{ inputs.push_images == true || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Read add-on version
         id: ver
@@ -51,7 +71,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.PUSH == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -72,15 +92,15 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
             ${{ env.IMAGE }}:latest
-          # Load into the local daemon for the smoke test; push only on main.
-          load: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # Load into the local daemon for the smoke test; push only on main or when requested by update.yml.
+          load: ${{ env.PUSH != 'true' }}
+          push: ${{ env.PUSH == 'true' }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
 
       # On main the image was pushed, not loaded: pull it back for the test.
       - name: Pull pushed image
-        if: matrix.arch == 'amd64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: matrix.arch == 'amd64' && env.PUSH == 'true'
         run: docker pull "$IMAGE:${{ steps.ver.outputs.version }}"
 
       - name: Smoke test

@@ -1,4 +1,4 @@
-# Version of the published Famlin image to build on (updated by .github/workflows/bump.yml).
+# Version of the published Famlin image to build on (updated by .github/workflows/update.yml).
 ARG FAMLIN_VERSION=0.8.7
 FROM ghcr.io/timvanonckelen/famlin:${FAMLIN_VERSION}
 

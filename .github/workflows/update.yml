@@ -1,0 +1,157 @@
+name: Update Famlin
+
+# Follows new Famlin releases without any token or manual step. Commits and PRs
+# made with GITHUB_TOKEN do not trigger other workflows, so a non-breaking bump
+# is validated inside this workflow (by calling build.yml on a temporary branch,
+# which also publishes the images) before main is fast-forwarded to it. A
+# breaking release opens a PR for a human to review instead.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Famlin version to move to (default is the latest release)
+        required: false
+        type: string
+  # Optional fast path: the Famlin repo can send {"version": "x.y.z"}.
+  repository_dispatch:
+    types: [famlin-release]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      version: ${{ steps.check.outputs.version }}
+      breaking: ${{ steps.check.outputs.breaking }}
+      release_url: ${{ steps.check.outputs.release_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check for a new release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ github.event.inputs.version || github.event.client_payload.version }}
+        run: |
+          CURRENT=$(sed -n -E 's/^version: *"?([^"]+)"?.*/\1/p' famlin/config.yaml | head -n1)
+          export CURRENT
+          .github/scripts/check-release.sh
+
+  # Breaking release: open (or refresh) a PR, then run the build without
+  # pushing images so the PR is already known to build.
+  pull-request:
+    needs: check
+    if: needs.check.outputs.status == 'update' && needs.check.outputs.breaking == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      operation: ${{ steps.pr.outputs.pull-request-operation }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Apply bump
+        run: BREAKING=true .github/scripts/bump.sh "$VERSION"
+      - name: Open pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: update/famlin-${{ needs.check.outputs.version }}
+          commit-message: "chore: update to Famlin ${{ needs.check.outputs.version }} (breaking)"
+          title: "chore: update to Famlin ${{ needs.check.outputs.version }} (breaking changes)"
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          delete-branch: true
+          body: |
+            Famlin ${{ needs.check.outputs.version }} contains **breaking changes**, so it was not applied automatically.
+
+            Release notes: ${{ needs.check.outputs.release_url }}
+
+            Review them, then merge. Merging to `main` runs the build and publishes the images.
+            Checks do not start automatically on this PR (it was opened with the workflow token);
+            the *Build validation* job of the *Update Famlin* run that opened it already built it
+            without pushing images.
+      - name: Summary
+        env:
+          OPERATION: ${{ steps.pr.outputs.pull-request-operation }}
+          URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          echo "Breaking release ${VERSION}, pull request ${OPERATION:-unchanged}: ${URL}" >> "$GITHUB_STEP_SUMMARY"
+
+  validate-pull-request:
+    name: Build validation
+    needs: [check, pull-request]
+    if: needs.pull-request.outputs.operation == 'created' || needs.pull-request.outputs.operation == 'updated'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: update/famlin-${{ needs.check.outputs.version }}
+      push_images: false
+
+  # Non-breaking release: bump on a temporary branch, build + publish images
+  # from it, and only then move main.
+  branch:
+    needs: check
+    if: needs.check.outputs.status == 'update' && needs.check.outputs.breaking != 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Commit bump to temporary branch
+        run: |
+          .github/scripts/bump.sh "$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "update/famlin-${VERSION}"
+          git add -A
+          git commit -m "chore: update to Famlin ${VERSION}"
+          git push --force origin "update/famlin-${VERSION}"
+
+  build:
+    needs: [check, branch]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: update/famlin-${{ needs.check.outputs.version }}
+      push_images: true
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fast-forward main and clean up
+        run: |
+          # Fails (and retries on the next run) if main moved in the meantime.
+          git push origin "refs/remotes/origin/update/famlin-${VERSION}:refs/heads/main"
+          git push origin --delete "update/famlin-${VERSION}"
+          echo "Updated to Famlin ${VERSION}; images published, main fast-forwarded." >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup:
+    needs: [check, branch, build]
+    if: failure() && needs.branch.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report failed validation
+        run: |
+          echo "::error::Build for Famlin ${{ needs.check.outputs.version }} failed; main was not changed. Branch update/famlin-${{ needs.check.outputs.version }} is kept for inspection and retried on the next run."
+          echo "Update to ${{ needs.check.outputs.version }} failed validation; main unchanged." >> "$GITHUB_STEP_SUMMARY"

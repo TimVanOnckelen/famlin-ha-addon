@@ -33,12 +33,32 @@ https://famlin.app/docs/install-home-assistant
   breaks installs until the images exist. After the first green build on
   `main`, make the two ghcr packages public (package settings, change
   visibility) and uncomment the `image:` line in `famlin/config.yaml`.
-- **Releasing a new Famlin version:** run the *Bump version* workflow (Actions
-  tab, enter the version) or let it be triggered with a `repository_dispatch`
-  event of type `famlin-release` and payload `{"version": "x.y.z"}`. It updates
-  `config.yaml`, the `Dockerfile` and the changelog and opens a PR; merge it
-  once the Famlin image for that version is published. The Famlin repository
-  can send that event automatically if it has an `HA_ADDON_DISPATCH_TOKEN`
-  secret (a PAT with write access to this repo); this is optional.
-- Opening PRs created by the bump workflow may need *Settings, Actions,
-  General, Allow GitHub Actions to create and approve pull requests* enabled.
+- **New Famlin releases are followed automatically.** The *Update Famlin*
+  workflow (`.github/workflows/update.yml`) runs every 6 hours (and on demand:
+  Actions tab, *Run workflow*, optionally with a version; a
+  `repository_dispatch` of type `famlin-release` with payload
+  `{"version": "x.y.z"}` is an optional fast path). It looks up the latest
+  Famlin release, waits until the `ghcr.io/timvanonckelen/famlin:<version>`
+  image exists (otherwise it quietly retries on the next run), and only ever
+  moves forward.
+  - **Normal releases:** the bump (`config.yaml`, `Dockerfile`, changelog) is
+    committed to a temporary branch `update/famlin-<version>`, the *Build*
+    workflow is run on it (lint, native amd64/aarch64 build, smoke test) and
+    publishes the add-on images, and only if that succeeds `main` is
+    fast-forwarded to it. The images therefore exist before the version on
+    `main` changes. Nothing needs a token: workflow runs started by the
+    default `GITHUB_TOKEN` cannot trigger other workflows, so everything is
+    chained inside the one run.
+  - **Breaking releases** (release notes contain "BREAKING CHANGES", or the
+    major version changes) are not applied automatically: a pull request
+    `update/famlin-<version>` is opened for review, after the same build ran
+    on its branch without pushing images. Checks do not start by themselves on
+    that PR (same token limitation); the build already ran in the update run.
+    Merging runs the normal *Build* on `main`, which publishes the images.
+    The job summary of each run says what happened ("already up to date",
+    "image not published yet", "updated to x", "breaking: PR opened").
+- **One-time repository settings** (Settings, Actions, General): *Workflow
+  permissions* set to **Read and write permissions**, and **Allow GitHub
+  Actions to create and approve pull requests** enabled. If `main` has branch
+  protection, the Actions bot must be allowed to push to it. After the first
+  push of the images, make the two ghcr packages public (see above).
