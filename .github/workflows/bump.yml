@@ -20,7 +20,7 @@ jobs:
     env:
       INPUT_VERSION: ${{ github.event.inputs.version || github.event.client_payload.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Update files
         id: bump
