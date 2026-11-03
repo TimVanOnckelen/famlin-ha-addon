@@ -20,6 +20,9 @@ if [ -f "$OPTIONS" ]; then
 fi
 
 mkdir -p "$DATA/uploads" "$DATA/backups" "$DATA/famlin" "$PGRUN"
+# /data may be root-only (mode 700); postgres and node must be able to reach
+# their own subdirectories. Traverse only, no listing.
+chmod 711 "$DATA"
 # A recursive chown over a large photo library on every start is slow: only
 # do it when the top-level owner is wrong.
 for d in "$DATA/uploads" "$DATA/backups" "$DATA/famlin"; do
