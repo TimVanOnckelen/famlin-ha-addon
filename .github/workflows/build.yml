@@ -1,0 +1,114 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add-on linter
+        uses: frenck/action-addon-linter@v2
+        with:
+          path: ./famlin
+      - name: ShellCheck
+        run: shellcheck famlin/rootfs/run.sh
+
+  build:
+    needs: lint
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: ghcr.io/timvanonckelen/famlin-ha-addon-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read add-on version
+        id: ver
+        run: |
+          version=$(sed -n -E 's/^version: *"?([^"]+)"?.*/\1/p' famlin/config.yaml | head -n1)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: famlin
+          build-args: |
+            FAMLIN_VERSION=${{ steps.ver.outputs.version }}
+          labels: |
+            io.hass.version=${{ steps.ver.outputs.version }}
+            io.hass.arch=${{ matrix.arch }}
+            io.hass.type=addon
+            org.opencontainers.image.source=https://github.com/TimVanOnckelen/famlin-ha-addon
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          # Load into the local daemon for the smoke test; push only on main.
+          load: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      # On main the image was pushed, not loaded: pull it back for the test.
+      - name: Pull pushed image
+        if: matrix.arch == 'amd64' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker pull "$IMAGE:${{ steps.ver.outputs.version }}"
+
+      - name: Smoke test
+        if: matrix.arch == 'amd64'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          data=$(mktemp -d)
+          echo '{"trust_proxy": false}' > "$data/options.json"
+          docker run -d --name famlin-smoke -p 3000:3000 -v "$data:/data" "$IMAGE:$VERSION"
+          ok=false
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/api/auth/setup-status; then
+              ok=true
+              break
+            fi
+            sleep 2
+          done
+          echo
+          if [ "$ok" != true ]; then
+            echo "::error::Add-on did not become healthy within 120s"
+            docker logs famlin-smoke
+            exit 1
+          fi
+          docker stop -t 60 famlin-smoke
+          code=$(docker inspect -f '{{.State.ExitCode}}' famlin-smoke)
+          docker logs famlin-smoke
+          if [ "$code" != 0 ]; then
+            echo "::error::Add-on exited with code $code on stop"
+            exit 1
+          fi

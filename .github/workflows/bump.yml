@@ -1,0 +1,55 @@
+name: Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Famlin version to point the add-on at (e.g. 0.9.0)
+        required: true
+        type: string
+  repository_dispatch:
+    types: [famlin-release]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      INPUT_VERSION: ${{ github.event.inputs.version || github.event.client_payload.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update files
+        id: bump
+        run: |
+          version="${INPUT_VERSION#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$version' is not a semantic version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          sed -i -E "s#^version: .*#version: \"${version}\"#" famlin/config.yaml
+          sed -i -E "s#^(ARG FAMLIN_VERSION=).*#\1${version}#" famlin/Dockerfile
+          {
+            echo "# Changelog"
+            echo
+            echo "## ${version}"
+            echo
+            echo "- Based on Famlin ${version}, see the [release notes](https://github.com/TimVanOnckelen/famlin/releases/tag/v${version})."
+            tail -n +2 famlin/CHANGELOG.md
+          } > CHANGELOG.new
+          mv CHANGELOG.new famlin/CHANGELOG.md
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bump/${{ steps.bump.outputs.version }}
+          commit-message: "chore: bump to Famlin ${{ steps.bump.outputs.version }}"
+          title: "chore: bump to Famlin ${{ steps.bump.outputs.version }}"
+          body: |
+            Points the add-on at Famlin ${{ steps.bump.outputs.version }}.
+            Merge once the `ghcr.io/timvanonckelen/famlin:${{ steps.bump.outputs.version }}` image is published.
+          delete-branch: true
