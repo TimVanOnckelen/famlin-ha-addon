@@ -28,11 +28,10 @@ https://famlin.app/docs/install-home-assistant
   PostgreSQL 16. CI (`.github/workflows/build.yml`) lints, builds both
   architectures natively, smoke-tests the amd64 image, and on `main` pushes
   `ghcr.io/timvanonckelen/famlin-ha-addon-{amd64,aarch64}`.
-- **Pre-built images (not enabled yet):** `config.yaml` has a commented-out
-  `image:` line. Adding it makes Home Assistant pull instead of build, which
-  breaks installs until the images exist. After the first green build on
-  `main`, make the two ghcr packages public (package settings, change
-  visibility) and uncomment the `image:` line in `famlin/config.yaml`.
+- **Pre-built images:** `config.yaml` sets `image:`, so Home Assistant pulls
+  the public ghcr images instead of building on the device. Never move
+  `version` on `main` before the matching images exist (`update.yml` takes care
+  of that ordering).
 - **New Famlin releases are followed automatically.** The *Update Famlin*
   workflow (`.github/workflows/update.yml`) runs every 6 hours (and on demand:
   Actions tab, *Run workflow*, optionally with a version; a

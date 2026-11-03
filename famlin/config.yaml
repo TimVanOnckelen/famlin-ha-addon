@@ -23,6 +23,7 @@ options:
   trust_proxy: false
 schema:
   trust_proxy: bool
-# Enable only after the first green build on main has published the images and
-# the two ghcr packages are public; until then Home Assistant builds locally.
-# image: ghcr.io/timvanonckelen/famlin-ha-addon-{arch}
+# Pre-built images published by CI (build.yml / update.yml); Home Assistant
+# pulls these instead of building the Dockerfile on the device. update.yml
+# only moves `version` on main after the matching images exist.
+image: ghcr.io/timvanonckelen/famlin-ha-addon-{arch}
