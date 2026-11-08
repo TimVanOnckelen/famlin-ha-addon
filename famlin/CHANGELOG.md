@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.0
+
+- Based on Famlin 0.9.0, see the [release notes](https://github.com/TimVanOnckelen/famlin/releases/tag/v0.9.0).
+
 ## 0.8.7
 
 - First staged version of the Famlin add-on, based on the Famlin 0.8.7 image.
