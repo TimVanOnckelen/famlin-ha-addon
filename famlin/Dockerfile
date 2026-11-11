@@ -1,5 +1,5 @@
 # Version of the published Famlin image to build on (updated by .github/workflows/update.yml).
-ARG FAMLIN_VERSION=0.9.0
+ARG FAMLIN_VERSION=0.9.1
 FROM ghcr.io/timvanonckelen/famlin:${FAMLIN_VERSION}
 
 # This image runs as the unprivileged "node" user. The add-on needs root to
