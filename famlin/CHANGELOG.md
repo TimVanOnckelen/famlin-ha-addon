@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0
+
+- Based on Famlin 0.10.0, see the [release notes](https://github.com/TimVanOnckelen/famlin/releases/tag/v0.10.0).
+- This release contains breaking changes: read the release notes before updating.
+
 ## 0.9.2
 
 - Based on Famlin 0.9.2, see the [release notes](https://github.com/TimVanOnckelen/famlin/releases/tag/v0.9.2).
